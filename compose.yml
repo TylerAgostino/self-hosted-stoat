@@ -62,7 +62,14 @@ services:
   caddy:
     image: docker.io/caddy
     restart: always
-    env_file: /mnt/user/apollo-share/Stoat/self-hosted/.env.web
+    environment:
+      - REVOLT_PUBLIC_URL=https://stoat.beerleague.racing/api
+      - VITE_API_URL=https://stoat.beerleague.racing/api
+      - VITE_WS_URL=wss://stoat.beerleague.racing/ws
+      - VITE_MEDIA_URL=https://stoat.beerleague.racing/autumn
+      - VITE_PROXY_URL=https://stoat.beerleague.racing/january
+      - VITE_CFG_ENABLE_VIDEO=true
+
     ports:
       - "80:80"
       - "443:443"
@@ -215,4 +222,10 @@ services:
   web:
     image: ghcr.io/stoatchat/for-web:103d2bf
     restart: always
-    env_file: /mnt/user/apollo-share/Stoat/self-hosted/.env.web
+    environment:
+      - REVOLT_PUBLIC_URL=https://stoat.beerleague.racing/api
+      - VITE_API_URL=https://stoat.beerleague.racing/api
+      - VITE_WS_URL=wss://stoat.beerleague.racing/ws
+      - VITE_MEDIA_URL=https://stoat.beerleague.racing/autumn
+      - VITE_PROXY_URL=https://stoat.beerleague.racing/january
+      - VITE_CFG_ENABLE_VIDEO=true
