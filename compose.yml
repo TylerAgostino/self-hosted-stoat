@@ -1,12 +1,138 @@
 name: stoat
 
+# ---------------------------------------------------------------------------
+# Configs – define Revolt.toml, livekit.yml, and Caddyfile inline so Portainer
+# can manage them via the "Configs" UI without any files on the host.
+# ---------------------------------------------------------------------------
+configs:
+  revolt_toml:
+    content: |
+      [hosts]
+      app = "https://${STOAT_DOMAIN}"
+      api = "https://${STOAT_DOMAIN}/api"
+      events = "wss://${STOAT_DOMAIN}/ws"
+      autumn = "https://${STOAT_DOMAIN}/autumn"
+      january = "https://${STOAT_DOMAIN}/january"
+
+      [hosts.livekit]
+      worldwide = "wss://${STOAT_DOMAIN}/livekit"
+
+      [pushd.vapid]
+      private_key = "${PUSHD_VAPID_PRIVATEKEY}"
+      public_key = "${PUSHD_VAPID_PUBLICKEY}"
+
+      [files]
+      encryption_key = "${FILES_ENCRYPTION_KEY}"
+
+      [api.livekit.nodes.worldwide]
+      url = "http://livekit:7880"
+      lat = 0.0
+      lon = 0.0
+      key = "${LIVEKIT_WORLDWIDE_KEY}"
+      secret = "${LIVEKIT_WORLDWIDE_SECRET}"
+
+      [features.limits.new_user]
+      video_resolution = [1920, 1080]
+      video_aspect_ratio = [0.3, 10]
+
+      [features.limits.default]
+      video_resolution = [1920, 1080]
+      video_aspect_ratio = [0.3, 10]
+
+  livekit_yml:
+    content: |
+      rtc:
+        use_external_ip: true
+        port_range_start: 50000
+        port_range_end: 50100
+        tcp_port: 7881
+
+      redis:
+        address: redis:6379
+
+      turn:
+        enabled: false
+
+      keys:
+        ${LIVEKIT_WORLDWIDE_KEY}: ${LIVEKIT_WORLDWIDE_SECRET}
+
+      webhook:
+        api_key: ${LIVEKIT_WORLDWIDE_KEY}
+        urls:
+        - "http://voice-ingress:8500/worldwide"
+
+  caddyfile:
+    content: |
+      ${CADDY_HOSTNAME} {
+        route /api* {
+          uri strip_prefix /api
+          reverse_proxy http://api:14702 {
+            header_down Location "^/" "/api/"
+          }
+        }
+
+        route /ws {
+          uri strip_prefix /ws
+          reverse_proxy http://events:14703 {
+            header_down Location "^/" "/ws/"
+          }
+        }
+
+        route /autumn* {
+          uri strip_prefix /autumn
+          reverse_proxy http://autumn:14704 {
+            header_down Location "^/" "/autumn/"
+          }
+        }
+
+        route /january* {
+          uri strip_prefix /january
+          reverse_proxy http://january:14705 {
+            header_down Location "^/" "/january/"
+          }
+        }
+
+        route /gifbox* {
+          uri strip_prefix /gifbox
+          reverse_proxy http://gifbox:14706 {
+            header_down Location "^/" "/gifbox/"
+          }
+        }
+
+        route /livekit* {
+          uri strip_prefix /livekit
+          reverse_proxy http://livekit:7880 {
+            header_down Location "^/" "/livekit/"
+          }
+        }
+
+        route /ingress* {
+          uri strip_prefix /ingress
+          reverse_proxy http://voice-ingress:8500 {
+            header_down Location "^/" "/ingress/"
+          }
+        }
+
+        reverse_proxy http://web:5000
+      }
+
+# ---------------------------------------------------------------------------
+# Named volumes – Portainer manages these; no hardcoded host paths required.
+# ---------------------------------------------------------------------------
+volumes:
+  db-data:
+  rabbit-data:
+  minio-data:
+  caddy-data:
+  caddy-config:
+
 services:
   # MongoDB: Database
   database:
     image: docker.io/mongo
     restart: always
     volumes:
-      - ./data/db:/data/db
+      - db-data:/data/db
     healthcheck:
       test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
       interval: 10s
@@ -27,7 +153,7 @@ services:
       RABBITMQ_DEFAULT_USER: rabbituser
       RABBITMQ_DEFAULT_PASS: rabbitpass
     volumes:
-      - ./data/rabbit:/var/lib/rabbitmq
+      - rabbit-data:/var/lib/rabbitmq
     healthcheck:
       test: rabbitmq-diagnostics -q ping
       interval: 10s
@@ -40,7 +166,7 @@ services:
     image: docker.io/minio/minio
     command: server /data
     volumes:
-      - ./data/minio:/data
+      - minio-data:/data
     environment:
       MINIO_ROOT_USER: minioautumn
       MINIO_ROOT_PASSWORD: minioautumn
@@ -59,21 +185,28 @@ services:
     restart: always
 
   # Caddy: Web server
+  # Set CADDY_HTTP_PORT to 8880 (and CADDY_HTTPS_PORT to any unused port) if
+  # Stoat sits behind an external reverse proxy; leave as 80/443 otherwise.
   caddy:
     image: docker.io/caddy
     restart: always
-    env_file: .env.web
+    environment:
+      # Used inside the Caddyfile config above.
+      # Set to ':80' when behind an external reverse proxy, else 'https://<domain>'
+      CADDY_HOSTNAME: "${CADDY_HOSTNAME:-https://${STOAT_DOMAIN}}"
     ports:
-      - "80:80"
-      - "443:443"
+      - "${CADDY_HTTP_PORT:-80}:80"
+      - "${CADDY_HTTPS_PORT:-443}:443"
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
-      - ./data/caddy-data:/data
-      - ./data/caddy-config:/config
+      - caddy-data:/data
+      - caddy-config:/config
     networks:
       default:
         aliases:
-         - "${STOAT_DOMAIN:-caddy}"
+          - "${STOAT_DOMAIN:-caddy}"
 
   # API server
   api:
@@ -85,9 +218,8 @@ services:
         condition: service_started
       rabbit:
         condition: service_healthy
-    volumes:
-      - type: bind
-        source: ./Revolt.toml
+    configs:
+      - source: revolt_toml
         target: /Revolt.toml
     restart: always
 
@@ -99,9 +231,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
-    volumes:
-      - type: bind
-        source: ./Revolt.toml
+    configs:
+      - source: revolt_toml
         target: /Revolt.toml
     restart: always
 
@@ -113,27 +244,24 @@ services:
         condition: service_healthy
       createbuckets:
         condition: service_started
-    volumes:
-      - type: bind
-        source: ./Revolt.toml
+    configs:
+      - source: revolt_toml
         target: /Revolt.toml
     restart: always
 
   # Metadata and image proxy
   january:
     image: ghcr.io/stoatchat/proxy:v0.11.1
-    volumes:
-      - type: bind
-        source: ./Revolt.toml
+    configs:
+      - source: revolt_toml
         target: /Revolt.toml
     restart: always
 
   # Tenor proxy
   gifbox:
     image: ghcr.io/stoatchat/gifbox:v0.11.1
-    volumes:
-      - type: bind
-        source: ./Revolt.toml
+    configs:
+      - source: revolt_toml
         target: /Revolt.toml
     restart: always
 
@@ -145,9 +273,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_started
-    volumes:
-      - type: bind
-        source: ./Revolt.toml
+    configs:
+      - source: revolt_toml
         target: /Revolt.toml
     restart: always
 
@@ -161,13 +288,12 @@ services:
         condition: service_started
       rabbit:
         condition: service_healthy
-    volumes:
-      - type: bind
-        source: ./Revolt.toml
+    configs:
+      - source: revolt_toml
         target: /Revolt.toml
     restart: always
 
-   # Voice ingress daemon
+  # Voice ingress daemon
   voice-ingress:
     image: ghcr.io/stoatchat/voice-ingress:v0.11.1
     restart: always
@@ -176,11 +302,11 @@ services:
         condition: service_healthy
       rabbit:
         condition: service_healthy
-    volumes:
-      - type: bind
-        source: ./Revolt.toml
+    configs:
+      - source: revolt_toml
         target: /Revolt.toml
 
+  # LiveKit media server
   livekit:
     image: ghcr.io/stoatchat/livekit-server:v1.9.6
     depends_on:
@@ -191,12 +317,11 @@ services:
       - "7881:7881"
       - "50000-50100:50000-50100/udp"
     restart: always
-    volumes:
-      - type: bind
-        source: ./livekit.yml
+    configs:
+      - source: livekit_yml
         target: /etc/livekit.yml
 
-  # Create buckets for minio.
+  # Create buckets for MinIO
   createbuckets:
     image: docker.io/minio/mc
     depends_on:
@@ -215,4 +340,10 @@ services:
   web:
     image: ghcr.io/stoatchat/for-web:103d2bf
     restart: always
-    env_file: .env.web
+    environment:
+      REVOLT_PUBLIC_URL: "https://${STOAT_DOMAIN}/api"
+      VITE_API_URL: "https://${STOAT_DOMAIN}/api"
+      VITE_WS_URL: "wss://${STOAT_DOMAIN}/ws"
+      VITE_MEDIA_URL: "https://${STOAT_DOMAIN}/autumn"
+      VITE_PROXY_URL: "https://${STOAT_DOMAIN}/january"
+      VITE_CFG_ENABLE_VIDEO: "${VITE_CFG_ENABLE_VIDEO:-true}"
