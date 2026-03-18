@@ -71,8 +71,8 @@ services:
       - VITE_CFG_ENABLE_VIDEO=true
 
     ports:
-      - "80:80"
-      - "443:443"
+      - "8511:80"
+      - "8512:443"
     volumes:
       - /mnt/user/apollo-share/Stoat/self-hosted/Caddyfile:/etc/caddy/Caddyfile
       - /mnt/user/apollo-share/Stoat/self-hosted/data/caddy-data:/data
